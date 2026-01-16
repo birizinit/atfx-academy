@@ -21,9 +21,9 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: "/evos-pwa-icon.png",
-    shortcut: "/evos-pwa-icon.png",
-    apple: "/evos-pwa-icon.png",
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
   },
   appleWebApp: {
     capable: true,
@@ -46,9 +46,9 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="ATFX ACADEMY" />
-        <link rel="apple-touch-icon" href="/evos-pwa-icon.png" />
-        <link rel="icon" type="image/png" sizes="192x192" href="/evos-pwa-icon.png" />
-        <link rel="icon" type="image/png" sizes="512x512" href="/evos-pwa-icon.png" />
+        <link rel="apple-touch-icon" href="/logo.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/logo.png" />
+        <link rel="icon" type="image/png" sizes="512x512" href="/logo.png" />
       </head>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         <Suspense fallback={null}>{children}</Suspense>
