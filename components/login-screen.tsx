@@ -204,7 +204,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                     <iframe
                       width="100%"
                       height="100%"
-                      src="https://www.youtube.com/embed/0M62A5oPVNA"
+                      src="https://www.youtube.com/embed/yAKKy_s4EGI"
                       title="Como obter chave API"
                       frameBorder="0"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
