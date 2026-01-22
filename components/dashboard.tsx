@@ -127,7 +127,7 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
            stopLossPercent > 0
   }
 
-  const BOT_SYMBOLS = ["APPLE.OTC", "XRPUSDT", "ETHUSDT", "BTCUSDT", "SOLUSDT", "GOOGLUSDT.OTC"]
+  const BOT_SYMBOLS = ["ETHUSDT.OTC","BTCUSDT.OTC","FACEBOOK.OTC","EURGBP.OTC","MCD.OTC","MSFT.OTC","AXP.OTC","USDJPY.OTC","APPLE.OTC",  "GOOGLUSDT.OTC"]
   const CLOSE_TYPE = "01:00"
   const TRADE_INTERVAL = 60000
 
