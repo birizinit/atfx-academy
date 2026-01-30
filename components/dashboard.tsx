@@ -102,6 +102,9 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
   const activeTradesCountRef = useRef<number>(0)
   const lastTradeTimeRef = useRef<number>(0)
   const botActiveRef = useRef<boolean>(false)
+  const localPendingTradeRef = useRef<Trade | null>(null)
+  const localPendingTradeTimestampRef = useRef<number | null>(null)
+  const openingTradeRef = useRef<boolean>(false)
 
   const [baseTradeAmount, setBaseTradeAmount] = useState<number>(1)
   const [baseTradeAmountInput, setBaseTradeAmountInput] = useState<string>("1")
@@ -289,10 +292,15 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
         const rawTrades = Array.isArray(data?.data) ? data.data : []
 
         const normalizeStatus = (trade: any): Trade["status"] => {
-          if (trade.result === "WON") return "WIN"
-          if (trade.result === "LOST") return "LOSS"
-          if (trade.result === "CANCELLED" || trade.status === "CANCELLED") return "CANCELLED"
-          if (trade.result === "PENDING") return "PENDING"
+          const result = String(trade?.result ?? "").toUpperCase()
+          const status = String(trade?.status ?? "").toUpperCase()
+
+          if (result === "WON") return "WIN"
+          if (result === "LOST") return "LOSS"
+          if (result === "CANCELLED" || status === "CANCELLED") return "CANCELLED"
+          if (result === "PENDING" || status === "PENDING" || status === "OPEN" || status === "OPENED" || status === "RUNNING") {
+            return "PENDING"
+          }
           return "PENDING"
         }
 
@@ -308,46 +316,72 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
           result: trade.pnl ?? 0,
         }))
 
-        // Filtrar apenas operações criadas APÓS o início da sessão
-        const sessionStartTime = sessionStartTimeRef.current
-        const filteredTrades = normalizedTrades.filter((trade) => {
-          const tradeOpenTime = new Date(trade.openTime).getTime()
-          return tradeOpenTime >= sessionStartTime
-        })
-
-        const sortedByOpenTime = [...filteredTrades].sort(
+        const sortedByOpenTime = [...normalizedTrades].sort(
           (a, b) => new Date(b.openTime).getTime() - new Date(a.openTime).getTime(),
         )
 
-        // Filtrar apenas operações que realmente estão pendentes (não finalizadas)
+        // Operações pendentes: não podem ser filtradas pela sessão, pois bloqueiam novas entradas
         const pendingTrades = sortedByOpenTime.filter((trade) => {
-          // Uma operação é considerada pendente se o status é PENDING
           const isPending = trade.status === "PENDING"
           console.log(`[FETCH_TRADES] Trade ${trade.id} - status: ${trade.status}, isPending: ${isPending}`)
           return isPending
         })
+
+        // Operações finalizadas continuam filtradas pela sessão atual
+        const sessionStartTime = sessionStartTimeRef.current
         const completedTrades = sortedByOpenTime.filter((trade) => trade.status === "WIN" || trade.status === "LOSS")
-        const completedSorted = [...completedTrades].sort((a, b) => {
+        const completedInSession = completedTrades.filter((trade) => {
+          const tradeOpenTime = new Date(trade.openTime).getTime()
+          return tradeOpenTime >= sessionStartTime
+        })
+        const completedSorted = [...completedInSession].sort((a, b) => {
           const aTime = a.closeTime ? new Date(a.closeTime).getTime() : new Date(a.openTime).getTime()
           const bTime = b.closeTime ? new Date(b.closeTime).getTime() : new Date(b.openTime).getTime()
           return bTime - aTime
         })
 
-        console.log(`[FETCH_TRADES] Definindo activeTrades com ${pendingTrades.length} operações pendentes`)
-        setActiveTrades(pendingTrades)
-        activeTradesCountRef.current = pendingTrades.length
+        const localPendingTrade = localPendingTradeRef.current
+        const localPendingTimestamp = localPendingTradeTimestampRef.current
+        const localPendingGraceMs = TRADE_INTERVAL + 30000
+        let pendingTradesWithLocal = pendingTrades
+
+        if (localPendingTrade && localPendingTimestamp) {
+          const now = Date.now()
+          const isExpired = now - localPendingTimestamp > localPendingGraceMs
+          const matchesApi = pendingTrades.some((trade) => {
+            if (trade.id && localPendingTrade.id && trade.id === localPendingTrade.id) return true
+            const timeDiff = Math.abs(new Date(trade.openTime).getTime() - new Date(localPendingTrade.openTime).getTime())
+            return (
+              trade.symbol === localPendingTrade.symbol &&
+              trade.direction === localPendingTrade.direction &&
+              trade.amount === localPendingTrade.amount &&
+              timeDiff <= 120000
+            )
+          })
+
+          if (matchesApi || isExpired) {
+            localPendingTradeRef.current = null
+            localPendingTradeTimestampRef.current = null
+          } else {
+            pendingTradesWithLocal = [localPendingTrade, ...pendingTrades]
+          }
+        }
+
+        console.log(`[FETCH_TRADES] Definindo activeTrades com ${pendingTradesWithLocal.length} operações pendentes`)
+        setActiveTrades(pendingTradesWithLocal)
+        activeTradesCountRef.current = pendingTradesWithLocal.length
         setCompletedTrades(completedSorted.slice(0, 10))
 
-        const wins = completedTrades.filter((trade) => trade.status === "WIN").length
-        const losses = completedTrades.filter((trade) => trade.status === "LOSS").length
-        const profit = completedTrades.reduce((sum, trade) => sum + (trade.result ?? 0), 0)
+        const wins = completedInSession.filter((trade) => trade.status === "WIN").length
+        const losses = completedInSession.filter((trade) => trade.status === "LOSS").length
+        const profit = completedInSession.reduce((sum, trade) => sum + (trade.result ?? 0), 0)
         const lastTradeTime = completedSorted.length > 0
           ? completedSorted[0].closeTime || completedSorted[0].openTime
           : undefined
 
         setBotStats((prev) => ({
           ...prev,
-          totalTrades: pendingTrades.length + completedTrades.length,
+          totalTrades: pendingTradesWithLocal.length + completedInSession.length,
           wins,
           losses,
           profit,
@@ -442,6 +476,13 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
 
   const openAutomaticTrade = async () => {
     console.log("[BOT] openAutomaticTrade chamada - botActiveRef:", botActiveRef.current)
+
+    if (openingTradeRef.current) {
+      console.log("[BOT] Abertura já em andamento, aguardando conclusão.")
+      return
+    }
+
+    openingTradeRef.current = true
     try {
       // Verificar se o bot ainda está ativo ANTES de qualquer coisa
       if (!botActiveRef.current) {
@@ -453,8 +494,8 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
       const now = Date.now()
       const timeSinceLastTrade = now - lastTradeTimeRef.current
       
-      // Evitar múltiplas chamadas muito próximas (mínimo 2 segundos entre tentativas)
-      if (timeSinceLastTrade < 2000) {
+      // Evitar múltiplas chamadas muito próximas (aguarda a expiração padrão)
+      if (timeSinceLastTrade < TRADE_INTERVAL) {
         console.log("[BOT] Aguardando intervalo mínimo entre operações. Tempo desde última:", timeSinceLastTrade, "ms")
         return
       }
@@ -472,7 +513,7 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
       }
       
       // Verificar se há operações ativas - NÃO abrir nova se ainda houver pending
-      if (activeTradesCountRef.current > 0) {
+      if (activeTradesCountRef.current > 0 || localPendingTradeRef.current) {
         console.log("[BOT] Aguardando fechamento de operação pendente.")
         return
       }
@@ -600,6 +641,35 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
         const result = await response.json()
         console.log("[v0] Trade opened successfully:", result)
 
+        const tradeId =
+          result?.id ??
+          result?.data?.id ??
+          result?.trade?.id ??
+          `local-${Date.now()}`
+        const openTime =
+          result?.createdAt ??
+          result?.data?.createdAt ??
+          new Date().toISOString()
+
+        const optimisticTrade: Trade = {
+          id: tradeId,
+          symbol: selectedSymbol,
+          direction: selectedDirection,
+          amount: tradeAmount,
+          openTime,
+          status: "PENDING",
+          payout: result?.payout ?? result?.data?.payout ?? 0,
+          result: 0,
+        }
+
+        localPendingTradeRef.current = optimisticTrade
+        localPendingTradeTimestampRef.current = Date.now()
+        setActiveTrades((prev) => {
+          const exists = prev.some((trade) => trade.id === optimisticTrade.id)
+          return exists ? prev : [optimisticTrade, ...prev]
+        })
+        activeTradesCountRef.current = Math.max(activeTradesCountRef.current, 1)
+
         // Atualizar o tempo da última operação
         lastTradeTimeRef.current = Date.now()
 
@@ -610,6 +680,8 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
       }
     } catch (error) {
       console.error("[v0] Error in bot request:", error)
+    } finally {
+      openingTradeRef.current = false
     }
   }
 
@@ -738,6 +810,8 @@ export function Dashboard({ apiKey, onLogout }: DashboardProps) {
     setActiveTrades([])
     setCompletedTrades([])
     activeTradesCountRef.current = 0
+    localPendingTradeRef.current = null
+    localPendingTradeTimestampRef.current = null
     setConsecutiveLosses(0)
     setBotStats({
       totalTrades: 0,
